@@ -7,6 +7,7 @@ import { SummaryView } from './components/SummaryView';
 import { ClassDetailModal } from './components/ClassDetailModal';
 import { Spinner } from './components/ui/Spinner';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { StatusIndicator } from './components/ui/StatusIndicator';
 import { AIInsights } from './components/AIInsights';
 import { extractScheduleData, processAttendanceData, parseTimeToDate, formatTime } from './dataProcessor';
 import { createAttendanceKey } from './utils';
@@ -45,14 +46,13 @@ function App() {
 
   const handleScheduleUpload = async (file: File) => {
     setIsLoading(true);
-    setIsAiProcessing(true);
+    setIsAiProcessing(false);
     setError(null);
     
     // Validate file type
     if (!file.name.toLowerCase().endsWith('.csv')) {
       setError('Please upload a valid CSV file for the schedule.');
       setIsLoading(false);
-      setIsAiProcessing(false);
       return;
     }
     
@@ -64,31 +64,53 @@ function App() {
         throw new Error('The uploaded CSV file appears to be empty.');
       }
       
-      const localProcessing = extractScheduleData(text);
-      const aiProcessing = processCsvData(text);
-
-      const [scheduleResult, aiResult] = await Promise.allSettled([localProcessing, aiProcessing]);
-
-      if (scheduleResult.status === 'fulfilled') {
-        setScheduleData(scheduleResult.value);
-        localStorage.setItem('scheduleCsvText', text);
-      } else {
-        throw new Error(`Error processing schedule: ${scheduleResult.reason.message}`);
-      }
+      // OPTIMIZATION: Process locally first for immediate display
+      console.log('Processing schedule data locally...');
+      const scheduleResult = await extractScheduleData(text);
       
-      if (aiResult.status === 'fulfilled') {
-        setRawScheduleData(aiResult.value);
-        localStorage.setItem('rawScheduleDataJson', JSON.stringify(aiResult.value));
-      } else {
-        console.warn(`AI processing failed: ${aiResult.reason.message}`);
-        setError("Schedule processed, but AI analysis failed. Advanced views may be unavailable.");
+      // Add debugging information
+      const totalClasses = Object.values(scheduleResult).flat().length;
+      console.log(`Schedule processed successfully! Found ${totalClasses} classes across ${Object.keys(scheduleResult).length} days`);
+      
+      if (totalClasses === 0) {
+        console.warn('No classes found in CSV. This might indicate a parsing issue.');
+        setError('No classes were found in the uploaded CSV file. Please check the file format.');
+        return;
       }
+
+      // Log sample of processed data for debugging
+      const sampleClasses = Object.values(scheduleResult).flat().slice(0, 3);
+      console.log('Sample processed classes:', sampleClasses);
+      
+      setScheduleData(scheduleResult);
+      localStorage.setItem('scheduleCsvText', text);
+      
+      // Show success message for local processing
+      console.log('Schedule processed successfully! AI processing will run in background for advanced features.');
+      
+      // OPTIMIZATION: AI processing runs in background after local processing completes
+      setIsAiProcessing(true);
+      
+      // Background AI processing - don't block the UI
+      setTimeout(async () => {
+        try {
+          console.log('Starting AI processing for advanced features...');
+          const aiResult = await processCsvData(text);
+          setRawScheduleData(aiResult);
+          localStorage.setItem('rawScheduleDataJson', JSON.stringify(aiResult));
+          console.log('AI processing completed successfully!');
+        } catch (aiError: any) {
+          console.warn(`AI processing failed: ${aiError.message}`);
+          // Don't show error for AI failure - local processing worked
+        } finally {
+          setIsAiProcessing(false);
+        }
+      }, 100); // Small delay to allow UI to update
 
     } catch (err: any) {
       setError(`Error processing schedule CSV: ${err.message}`);
     } finally {
       setIsLoading(false);
-      setIsAiProcessing(false);
     }
   };
 
@@ -271,6 +293,7 @@ function App() {
 
   return (
     <ErrorBoundary>
+      <StatusIndicator isAiProcessing={isAiProcessing} />
       <div className="bg-slate-100 text-slate-800 min-h-screen">
         <header className="bg-white/80 backdrop-blur-sm sticky top-0 z-40 border-b border-slate-200">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">

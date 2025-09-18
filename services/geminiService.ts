@@ -200,33 +200,19 @@ Consider factors like:
 Provide attendance predictions with confidence levels and key influencing factors.
 `;
 
-// Existing CSV processing functionality
+// Existing CSV processing functionality - OPTIMIZED for speed
 const csvProcessingPrompt = `
-You are an expert data processor. Your task is to analyze the provided raw text from a CSV file, which represents a weekly class schedule, and convert it into a structured JSON format. The CSV has a complex, non-tabular layout with repeating weekly blocks horizontally.
+You are a data processor. Convert this CSV schedule data to JSON format.
 
-Here are the rules you must follow:
-1.  Identify each weekly block. A block is defined by a row of dates followed by a row of days of the week.
-2.  For each day within a block, extract the full date (e.g., "25 Aug 2025") and the day of the week (e.g., "Monday").
-3.  The columns for each day are typically: 'Location', 'Class', 'Trainer 1', 'Trainer 2', 'Cover'. The 'Time' column is the very first column for all days in that row.
-4.  Iterate through each time slot row for each day.
-5.  If a row for a specific day and time has class information (a class name or trainer), create a JSON object for it.
-6.  Extract the following fields for each class:
-    - "id": Generate a unique string ID for each entry, for example, combining date, time, and location.
-    - "date": The full date for that column's block, formatted as YYYY-MM-DD.
-    - "day": The day of the week.
-    - "time": The time from the first column of the row.
-    - "location": The value from the 'Location' column.
-    - "className": The value from the 'Class' column.
-    - "trainer1": The value from the 'Trainer 1' column.
-    - "trainer2": The value from the 'Trainer 2' column.
-    - "cover": The value from the 'Cover' column.
-    - "status": If the 'Class' value is 'Class canceled', set this to 'Canceled'. Otherwise, set it to 'Scheduled'.
-7.  Skip any rows that are entirely empty or contain metadata like "Guidelines" or non-schedule related notes.
-8.  Handle empty or placeholder cells (like '#REF!') gracefully. If a trainer, location, or class is not specified, represent it as null in the JSON.
-9.  Ignore the extra non-schedule columns at the end of the CSV data like 'Any class?', 'VM Road', 'C+C', etc. Also ignore the specific 'Trainer Off' columns.
-10. Combine all extracted class schedules from all weeks into a single flat array.
+Rules:
+1. Find weekly blocks (dates + days rows)
+2. Extract for each day: date, day, time, location, class name, trainers
+3. Generate unique ID for each entry
+4. Format date as YYYY-MM-DD
+5. Set status: 'Scheduled' or 'Canceled' (if "Class canceled")
+6. Skip empty rows and metadata
 
-Your output MUST be a JSON object with a single key "schedules" which is an array of schedule objects, conforming to the provided schema.
+Output: JSON object with "schedules" array.
 `;
 
 const csvSchema = {

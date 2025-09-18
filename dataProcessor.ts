@@ -125,7 +125,7 @@ const normalizeLocation = (locationRaw: string): string => {
     
     // Bengaluru locations  
     if (lowerLoc.includes('c+c') || lowerLoc.includes('cumberland')) return 'C+C';
-    if (lowerLoc.includes('vm road') || lowerLoc.includes('vm')) return 'VM Road';
+    if (lowerLoc.includes('vm road') || lowerLoc.includes('vm') || lowerLoc.includes('kenkere')) return 'Kenkere House';
     if (lowerLoc.includes('koramangala')) return 'Koramangala';
     if (lowerLoc.includes('whitefield')) return 'Whitefield';
     if (lowerLoc.includes('indiranagar')) return 'Indiranagar';
@@ -206,12 +206,16 @@ export async function extractScheduleData(csvText: string): Promise<ScheduleData
       complete: (results: any) => {
         try {
           const rows = results.data as string[][];
+          console.log(`CSV parsing complete. Total rows: ${rows.length}`);
+          
           if (rows.length < 4) throw new Error('CSV does not have enough rows to process.');
 
           const headerRowIndex = rows.findIndex(row =>
             row.some(cell => cell?.trim().toLowerCase() === 'time') &&
             row.some(cell => cell?.trim().toLowerCase() === 'location')
           );
+          
+          console.log(`Header row found at index: ${headerRowIndex}`);
           if (headerRowIndex === -1) throw new Error('Could not find a valid header row with "Time" and "Location".');
           
           let dayRowIndex = -1;
@@ -221,6 +225,8 @@ export async function extractScheduleData(csvText: string): Promise<ScheduleData
               break;
             }
           }
+          
+          console.log(`Day row found at index: ${dayRowIndex}`);
           if (dayRowIndex === -1) throw new Error('Could not find a valid Day row (e.g., "Monday", "Tuesday") above the header row.');
 
           const dateRowIndex = dayRowIndex > 0 ? dayRowIndex - 1 : -1;
@@ -230,15 +236,24 @@ export async function extractScheduleData(csvText: string): Promise<ScheduleData
           const dateRow = dateRowIndex !== -1 ? rows[dateRowIndex] : [];
           const dataRows = rows.slice(headerRowIndex + 1);
 
+          console.log(`Data rows to process: ${dataRows.length}`);
+          console.log(`Header row: `, headerRow.slice(0, 10)); // Log first 10 columns
+          console.log(`Day row: `, dayRow.slice(0, 10)); // Log first 10 columns
+
           const timeColIndex = headerRow.findIndex(h => h?.trim().toLowerCase() === 'time');
           if (timeColIndex === -1) throw new Error('"Time" column not found in header.');
 
           const locationIndices = headerRow.map((h, i) => h?.trim().toLowerCase() === 'location' ? i : -1).filter(i => i !== -1);
+          console.log(`Found ${locationIndices.length} location columns at indices:`, locationIndices);
 
           const classes: ClassData[] = [];
+          let processedRows = 0;
+          
           for (const row of dataRows) {
             const timeRaw = row[timeColIndex]?.trim();
             if (!timeRaw || row.every(cell => !cell)) continue; 
+            
+            processedRows++;
 
             for (const locCol of locationIndices) {
               const locationRaw = row[locCol]?.trim();
@@ -283,6 +298,12 @@ export async function extractScheduleData(csvText: string): Promise<ScheduleData
             }
           }
 
+          console.log(`Processed ${processedRows} time slot rows and extracted ${classes.length} classes`);
+          
+          // Log sample of locations found for debugging
+          const uniqueLocations = [...new Set(classes.map(c => c.location))];
+          console.log(`Unique locations found:`, uniqueLocations);
+
           const classesByDay: ScheduleData = {};
           for (const cls of classes) {
             if (!classesByDay[cls.day]) classesByDay[cls.day] = [];
@@ -296,6 +317,7 @@ export async function extractScheduleData(csvText: string): Promise<ScheduleData
             }
           });
           
+          console.log('Final schedule data by day:', Object.keys(sortedClassesByDay).map(day => `${day}: ${sortedClassesByDay[day].length} classes`));
           resolve(sortedClassesByDay);
         } catch (err) { reject(err); }
       },
