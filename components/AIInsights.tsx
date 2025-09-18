@@ -22,17 +22,26 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'insights' | 'optimization' | 'prediction'>('insights');
   const [error, setError] = useState<string | null>(null);
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
 
   const generateInsights = async () => {
     if (scheduleData.length === 0) return;
     
     setLoading(true);
     setError(null);
+    setRetryMessage(null);
+    
     try {
       const result = await generateScheduleInsights(scheduleData, attendanceData);
       setInsights(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate insights');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate insights';
+      setError(errorMessage);
+      
+      // Show retry suggestion for certain errors
+      if (errorMessage.includes('overloaded') || errorMessage.includes('unavailable')) {
+        setRetryMessage('The AI service is currently busy. You can try again in a few minutes.');
+      }
     } finally {
       setLoading(false);
     }
@@ -43,11 +52,18 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
     
     setLoading(true);
     setError(null);
+    setRetryMessage(null);
+    
     try {
       const result = await generateScheduleOptimization(scheduleData, attendanceData);
       setOptimization(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate optimizations');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate optimizations';
+      setError(errorMessage);
+      
+      if (errorMessage.includes('overloaded') || errorMessage.includes('unavailable')) {
+        setRetryMessage('The AI service is currently busy. You can try again in a few minutes.');
+      }
     } finally {
       setLoading(false);
     }
@@ -58,13 +74,20 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
     
     setLoading(true);
     setError(null);
+    setRetryMessage(null);
+    
     try {
       // Use a sample class for prediction demonstration
       const sampleClass = scheduleData[0];
       const result = await predictAttendance(sampleClass, attendanceData);
       setPrediction(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate prediction');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate prediction';
+      setError(errorMessage);
+      
+      if (errorMessage.includes('overloaded') || errorMessage.includes('unavailable')) {
+        setRetryMessage('The AI service is currently busy. You can try again in a few minutes.');
+      }
     } finally {
       setLoading(false);
     }
@@ -208,18 +231,53 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
       {/* Loading State */}
       {loading && (
         <div className="flex justify-center py-12">
-          <Spinner size="lg" message="AI is analyzing your schedule data..." />
+          <Spinner 
+            size="lg" 
+            message="AI is analyzing your schedule data... This may take a moment." 
+          />
+          <div className="text-center mt-4">
+            <p className="text-sm text-gray-600">
+              If the service is busy, we'll automatically retry for you.
+            </p>
+          </div>
         </div>
       )}
 
       {/* Error State */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-          <div className="flex items-center gap-2 text-red-800">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span className="font-medium">Error: {error}</span>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0">
+              <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <h3 className="font-medium text-red-800 mb-2">AI Analysis Failed</h3>
+              <p className="text-red-700 mb-3">{error}</p>
+              {retryMessage && (
+                <div className="bg-red-100 border border-red-300 rounded-lg p-3 mt-3">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-sm text-red-800">{retryMessage}</p>
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  setError(null);
+                  setRetryMessage(null);
+                  if (activeTab === 'insights') generateInsights();
+                  else if (activeTab === 'optimization') generateOptimizations();
+                  else if (activeTab === 'prediction') generatePrediction();
+                }}
+                className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
           </div>
         </div>
       )}

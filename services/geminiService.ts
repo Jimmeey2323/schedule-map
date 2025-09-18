@@ -10,7 +10,7 @@ function getAiInstance(): GoogleGenAI {
     return ai;
   }
   
-  const API_KEY = process.env.API_KEY;
+  const API_KEY = 'AIzaSyCI59uZRMF3Gvv3LQJKoYSpgpG_dZPh1E8';
   if (!API_KEY) {
     // This error will now be thrown at runtime when processing is attempted, not on app load.
     throw new Error("API_KEY environment variable not set. AI processing is unavailable.");
@@ -19,6 +19,93 @@ function getAiInstance(): GoogleGenAI {
   ai = new GoogleGenAI({ apiKey: API_KEY });
   return ai;
 }
+
+// Enhanced retry logic for handling API errors
+interface RetryOptions {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+  backoffMultiplier: number;
+}
+
+const defaultRetryOptions: RetryOptions = {
+  maxRetries: 3,
+  baseDelay: 1000, // 1 second
+  maxDelay: 10000, // 10 seconds
+  backoffMultiplier: 2
+};
+
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+const isRetryableError = (error: any): boolean => {
+  if (error?.error?.code) {
+    const code = error.error.code;
+    // Retry on server errors, rate limits, and overload
+    return code === 503 || code === 500 || code === 429 || code === 502 || code === 504;
+  }
+  return false;
+};
+
+const withRetry = async <T>(
+  operation: () => Promise<T>,
+  options: RetryOptions = defaultRetryOptions
+): Promise<T> => {
+  let lastError: any;
+  
+  for (let attempt = 0; attempt <= options.maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      
+      // Don't retry if this is the last attempt or if the error is not retryable
+      if (attempt === options.maxRetries || !isRetryableError(error)) {
+        break;
+      }
+      
+      // Calculate delay with exponential backoff
+      const delayMs = Math.min(
+        options.baseDelay * Math.pow(options.backoffMultiplier, attempt),
+        options.maxDelay
+      );
+      
+      console.warn(`API request failed (attempt ${attempt + 1}/${options.maxRetries + 1}), retrying in ${delayMs}ms...`, error);
+      await delay(delayMs);
+    }
+  }
+  
+  throw lastError;
+};
+
+const getUserFriendlyErrorMessage = (error: any): string => {
+  if (error?.error?.code) {
+    const code = error.error.code;
+    switch (code) {
+      case 503:
+        return "The AI service is currently overloaded. Please try again in a few minutes.";
+      case 429:
+        return "Too many requests. Please wait a moment before trying again.";
+      case 500:
+      case 502:
+      case 504:
+        return "The AI service is temporarily unavailable. Please try again later.";
+      case 400:
+        return "Invalid request. Please check your data format.";
+      case 401:
+        return "Authentication failed. Please check your API configuration.";
+      case 403:
+        return "Access denied. Please check your API permissions.";
+      default:
+        return `AI service error (${code}): ${error.error.message || 'Unknown error'}`;
+    }
+  }
+  
+  if (error.message) {
+    return error.message;
+  }
+  
+  return "An unexpected error occurred with the AI service.";
+};
 
 // Enhanced AI services for schedule optimization and insights
 
@@ -228,39 +315,42 @@ const predictionSchema = {
 
 export const processCsvData = async (csvText: string): Promise<ClassSchedule[]> => {
   try {
-    const aiInstance = getAiInstance();
-    const fullPrompt = `${csvProcessingPrompt}\n\nHere is the CSV data:\n\n${csvText}`;
-    const response = await aiInstance.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: fullPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: csvSchema,
-      },
-    });
+    const result = await withRetry(async () => {
+      const aiInstance = getAiInstance();
+      const fullPrompt = `${csvProcessingPrompt}\n\nHere is the CSV data:\n\n${csvText}`;
+      
+      const response = await aiInstance.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: fullPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: csvSchema,
+        },
+      });
 
-    let jsonText = response.text.trim();
+      let jsonText = response.text.trim();
 
-    // The model can sometimes wrap the JSON in ```json ... ```, so we strip it.
-    if (jsonText.startsWith('```json')) {
-      jsonText = jsonText.substring(7, jsonText.length - 3).trim();
-    } else if (jsonText.startsWith('```')) {
-      jsonText = jsonText.substring(3, jsonText.length - 3).trim();
-    }
+      // The model can sometimes wrap the JSON in ```json ... ```, so we strip it.
+      if (jsonText.startsWith('```json')) {
+        jsonText = jsonText.substring(7, jsonText.length - 3).trim();
+      } else if (jsonText.startsWith('```')) {
+        jsonText = jsonText.substring(3, jsonText.length - 3).trim();
+      }
 
-    const result = JSON.parse(jsonText);
-    
-    if (result && result.schedules) {
-        return result.schedules;
-    } else {
+      const parsed = JSON.parse(jsonText);
+      
+      if (parsed && parsed.schedules) {
+        return parsed.schedules;
+      } else {
         throw new Error("AI response did not contain a 'schedules' array.");
-    }
+      }
+    });
+    
+    return result;
   } catch (error) {
     console.error("Error processing CSV with Gemini:", error);
-    if (error instanceof Error) {
-       throw new Error(`Failed to process data with AI: ${error.message}`);
-    }
-    throw new Error("Failed to parse data from AI due to an unknown error.");
+    const friendlyMessage = getUserFriendlyErrorMessage(error);
+    throw new Error(friendlyMessage);
   }
 };
 
@@ -269,45 +359,50 @@ export const generateScheduleInsights = async (
   attendanceData: Map<string, AttendanceData>
 ): Promise<ScheduleInsights> => {
   try {
-    const aiInstance = getAiInstance();
-    
-    // Prepare data for AI analysis
-    const scheduleContext = scheduleData.map(cls => ({
-      day: cls.day,
-      time: cls.time,
-      className: cls.className,
-      trainer: cls.trainer1,
-      location: cls.location,
-      difficulty: cls.difficulty
-    }));
+    const result = await withRetry(async () => {
+      const aiInstance = getAiInstance();
+      
+      // Prepare data for AI analysis
+      const scheduleContext = scheduleData.map(cls => ({
+        day: cls.day,
+        time: cls.time,
+        className: cls.className,
+        trainer: cls.trainer1,
+        location: cls.location,
+        difficulty: cls.difficulty
+      }));
 
-    const attendanceContext = Array.from(attendanceData.entries()).map(([key, data]) => ({
-      key,
-      avgAttendance: data.avgAttendance,
-      totalClasses: data.totalClasses,
-      checkedInCount: data.checkedInCount
-    }));
+      const attendanceContext = Array.from(attendanceData.entries()).map(([key, data]) => ({
+        key,
+        avgAttendance: data.avgAttendance,
+        totalClasses: data.totalClasses,
+        checkedInCount: data.checkedInCount
+      }));
 
-    const contextData = {
-      schedule: scheduleContext,
-      attendance: attendanceContext
-    };
+      const contextData = {
+        schedule: scheduleContext,
+        attendance: attendanceContext
+      };
 
-    const fullPrompt = `${scheduleAnalysisPrompt}\n\nSchedule and attendance data:\n${JSON.stringify(contextData, null, 2)}`;
-    
-    const response = await aiInstance.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: fullPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: insightsSchema,
-      },
+      const fullPrompt = `${scheduleAnalysisPrompt}\n\nSchedule and attendance data:\n${JSON.stringify(contextData, null, 2)}`;
+      
+      const response = await aiInstance.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: fullPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: insightsSchema,
+        },
+      });
+
+      return JSON.parse(response.text.trim());
     });
-
-    return JSON.parse(response.text.trim());
+    
+    return result;
   } catch (error) {
     console.error("Error generating schedule insights:", error);
-    throw new Error("Failed to generate schedule insights");
+    const friendlyMessage = getUserFriendlyErrorMessage(error);
+    throw new Error(friendlyMessage);
   }
 };
 
@@ -316,40 +411,45 @@ export const generateScheduleOptimization = async (
   attendanceData: Map<string, AttendanceData>
 ): Promise<ScheduleOptimization> => {
   try {
-    const aiInstance = getAiInstance();
-    
-    const contextData = {
-      schedule: scheduleData.map(cls => ({
-        day: cls.day,
-        time: cls.time,
-        className: cls.className,
-        trainer: cls.trainer1,
-        location: cls.location,
-        difficulty: cls.difficulty
-      })),
-      attendance: Array.from(attendanceData.entries()).map(([key, data]) => ({
-        key,
-        avgAttendance: data.avgAttendance,
-        totalClasses: data.totalClasses,
-        checkedInCount: data.checkedInCount
-      }))
-    };
+    const result = await withRetry(async () => {
+      const aiInstance = getAiInstance();
+      
+      const contextData = {
+        schedule: scheduleData.map(cls => ({
+          day: cls.day,
+          time: cls.time,
+          className: cls.className,
+          trainer: cls.trainer1,
+          location: cls.location,
+          difficulty: cls.difficulty
+        })),
+        attendance: Array.from(attendanceData.entries()).map(([key, data]) => ({
+          key,
+          avgAttendance: data.avgAttendance,
+          totalClasses: data.totalClasses,
+          checkedInCount: data.checkedInCount
+        }))
+      };
 
-    const fullPrompt = `${optimizationPrompt}\n\nData for optimization:\n${JSON.stringify(contextData, null, 2)}`;
-    
-    const response = await aiInstance.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: fullPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: optimizationSchema,
-      },
+      const fullPrompt = `${optimizationPrompt}\n\nData for optimization:\n${JSON.stringify(contextData, null, 2)}`;
+      
+      const response = await aiInstance.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: fullPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: optimizationSchema,
+        },
+      });
+
+      return JSON.parse(response.text.trim());
     });
-
-    return JSON.parse(response.text.trim());
+    
+    return result;
   } catch (error) {
     console.error("Error generating optimization suggestions:", error);
-    throw new Error("Failed to generate optimization suggestions");
+    const friendlyMessage = getUserFriendlyErrorMessage(error);
+    throw new Error(friendlyMessage);
   }
 };
 
@@ -358,32 +458,37 @@ export const predictAttendance = async (
   historicalData: Map<string, AttendanceData>
 ): Promise<AttendancePrediction> => {
   try {
-    const aiInstance = getAiInstance();
-    
-    const contextData = {
-      targetClass: classData,
-      historicalAttendance: Array.from(historicalData.entries()).map(([key, data]) => ({
-        key,
-        avgAttendance: data.avgAttendance,
-        totalClasses: data.totalClasses,
-        checkedInCount: data.checkedInCount
-      }))
-    };
+    const result = await withRetry(async () => {
+      const aiInstance = getAiInstance();
+      
+      const contextData = {
+        targetClass: classData,
+        historicalAttendance: Array.from(historicalData.entries()).map(([key, data]) => ({
+          key,
+          avgAttendance: data.avgAttendance,
+          totalClasses: data.totalClasses,
+          checkedInCount: data.checkedInCount
+        }))
+      };
 
-    const fullPrompt = `${predictionPrompt}\n\nPredict attendance for:\n${JSON.stringify(contextData, null, 2)}`;
-    
-    const response = await aiInstance.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: fullPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: predictionSchema,
-      },
+      const fullPrompt = `${predictionPrompt}\n\nPredict attendance for:\n${JSON.stringify(contextData, null, 2)}`;
+      
+      const response = await aiInstance.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: fullPrompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: predictionSchema,
+        },
+      });
+
+      return JSON.parse(response.text.trim());
     });
-
-    return JSON.parse(response.text.trim());
+    
+    return result;
   } catch (error) {
     console.error("Error predicting attendance:", error);
-    throw new Error("Failed to predict attendance");
+    const friendlyMessage = getUserFriendlyErrorMessage(error);
+    throw new Error(friendlyMessage);
   }
 };
