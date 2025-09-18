@@ -10,7 +10,7 @@ function getAiInstance(): GoogleGenAI {
     return ai;
   }
   
-  const API_KEY = 'AIzaSyCI59uZRMF3Gvv3LQJKoYSpgpG_dZPh1E8';
+  const API_KEY = 'AIzaSyAq_QgITLnhKtvKrFhOw-rvHc0G8FURgPM';
   if (!API_KEY) {
     // This error will now be thrown at runtime when processing is attempted, not on app load.
     throw new Error("API_KEY environment variable not set. AI processing is unavailable.");
