@@ -29,10 +29,10 @@ interface RetryOptions {
 }
 
 const defaultRetryOptions: RetryOptions = {
-  maxRetries: 3,
-  baseDelay: 1000, // 1 second
-  maxDelay: 10000, // 10 seconds
-  backoffMultiplier: 2
+  maxRetries: 5, // Increased retries for 503 errors
+  baseDelay: 2000, // Increased to 2 seconds
+  maxDelay: 30000, // Increased to 30 seconds for 503 errors
+  backoffMultiplier: 2.5 // Slightly more aggressive backoff
 };
 
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
@@ -44,6 +44,13 @@ const isRetryableError = (error: any): boolean => {
     return code === 503 || code === 500 || code === 429 || code === 502 || code === 504;
   }
   return false;
+};
+
+const getRetryDelay = (attempt: number, baseDelay: number, maxDelay: number, backoffMultiplier: number, errorCode?: number): number => {
+  // For 503 errors, use longer delays
+  const multiplier = errorCode === 503 ? 3 : 1;
+  const calculatedDelay = baseDelay * Math.pow(backoffMultiplier, attempt) * multiplier;
+  return Math.min(calculatedDelay, maxDelay);
 };
 
 const withRetry = async <T>(
@@ -58,18 +65,30 @@ const withRetry = async <T>(
     } catch (error) {
       lastError = error;
       
+      const errorCode = error?.error?.code;
+      
       // Don't retry if this is the last attempt or if the error is not retryable
       if (attempt === options.maxRetries || !isRetryableError(error)) {
         break;
       }
       
-      // Calculate delay with exponential backoff
-      const delayMs = Math.min(
-        options.baseDelay * Math.pow(options.backoffMultiplier, attempt),
-        options.maxDelay
-      );
+      // Calculate delay with custom logic for different error types
+      const delayMs = getRetryDelay(attempt, options.baseDelay, options.maxDelay, options.backoffMultiplier, errorCode);
       
-      console.warn(`API request failed (attempt ${attempt + 1}/${options.maxRetries + 1}), retrying in ${delayMs}ms...`, error);
+      const errorMessage = errorCode === 503 ? 
+        `API service overloaded (attempt ${attempt + 1}/${options.maxRetries + 1})` :
+        `API request failed (attempt ${attempt + 1}/${options.maxRetries + 1})`;
+      
+      console.warn(`${errorMessage}, retrying in ${Math.round(delayMs/1000)}s...`, error);
+      
+      // Send a message to user about retry attempts for 503 errors
+      if (errorCode === 503 && typeof window !== 'undefined') {
+        // Try to update UI with retry status if possible
+        window.dispatchEvent(new CustomEvent('ai-retry-status', {
+          detail: { attempt: attempt + 1, maxRetries: options.maxRetries + 1, delaySeconds: Math.round(delayMs/1000) }
+        }));
+      }
+      
       await delay(delayMs);
     }
   }
@@ -311,6 +330,61 @@ const predictionSchema = {
   }
 };
 
+// Model fallback strategy
+const MODELS = {
+  primary: "gemini-2.5-flash",
+  fallback: "gemini-1.5-flash"
+};
+
+const makeAPICallWithFallback = async (
+  aiInstance: GoogleGenAI,
+  prompt: string,
+  schema: any,
+  useStructuredOutput: boolean = true
+) => {
+  const models = [MODELS.primary, MODELS.fallback];
+  let lastError: any;
+  
+  for (const model of models) {
+    try {
+      console.log(`Attempting API call with model: ${model}`);
+      
+      const config = useStructuredOutput ? {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+      } : {};
+      
+      const response = await aiInstance.models.generateContent({
+        model,
+        contents: prompt,
+        config,
+      });
+
+      console.log(`Successfully used model: ${model}`);
+      return response;
+    } catch (error) {
+      lastError = error;
+      const errorCode = error?.error?.code;
+      
+      console.warn(`Model ${model} failed with error ${errorCode}:`, error?.error?.message || error.message);
+      
+      // If it's not a 503 error, don't try fallback model
+      if (errorCode !== 503) {
+        throw error;
+      }
+      
+      // If this was the last model, throw the error
+      if (model === models[models.length - 1]) {
+        throw error;
+      }
+      
+      console.log(`Trying fallback model due to 503 error...`);
+    }
+  }
+  
+  throw lastError;
+};
+
 // Enhanced AI Services
 
 export const processCsvData = async (csvText: string): Promise<ClassSchedule[]> => {
@@ -319,14 +393,7 @@ export const processCsvData = async (csvText: string): Promise<ClassSchedule[]> 
       const aiInstance = getAiInstance();
       const fullPrompt = `${csvProcessingPrompt}\n\nHere is the CSV data:\n\n${csvText}`;
       
-      const response = await aiInstance.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: fullPrompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: csvSchema,
-        },
-      });
+      const response = await makeAPICallWithFallback(aiInstance, fullPrompt, csvSchema);
 
       let jsonText = response.text.trim();
 
@@ -386,14 +453,7 @@ export const generateScheduleInsights = async (
 
       const fullPrompt = `${scheduleAnalysisPrompt}\n\nSchedule and attendance data:\n${JSON.stringify(contextData, null, 2)}`;
       
-      const response = await aiInstance.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: fullPrompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: insightsSchema,
-        },
-      });
+      const response = await makeAPICallWithFallback(aiInstance, fullPrompt, insightsSchema);
 
       return JSON.parse(response.text.trim());
     });
@@ -433,14 +493,7 @@ export const generateScheduleOptimization = async (
 
       const fullPrompt = `${optimizationPrompt}\n\nData for optimization:\n${JSON.stringify(contextData, null, 2)}`;
       
-      const response = await aiInstance.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: fullPrompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: optimizationSchema,
-        },
-      });
+      const response = await makeAPICallWithFallback(aiInstance, fullPrompt, optimizationSchema);
 
       return JSON.parse(response.text.trim());
     });
@@ -473,14 +526,7 @@ export const predictAttendance = async (
 
       const fullPrompt = `${predictionPrompt}\n\nPredict attendance for:\n${JSON.stringify(contextData, null, 2)}`;
       
-      const response = await aiInstance.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: fullPrompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: predictionSchema,
-        },
-      });
+      const response = await makeAPICallWithFallback(aiInstance, fullPrompt, predictionSchema);
 
       return JSON.parse(response.text.trim());
     });

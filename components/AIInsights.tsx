@@ -23,6 +23,21 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
   const [activeTab, setActiveTab] = useState<'insights' | 'optimization' | 'prediction'>('insights');
   const [error, setError] = useState<string | null>(null);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
+  const [retryStatus, setRetryStatus] = useState<{ attempt: number; maxRetries: number; delaySeconds: number } | null>(null);
+
+  // Listen for retry status events from the AI service
+  useEffect(() => {
+    const handleRetryStatus = (event: CustomEvent) => {
+      setRetryStatus(event.detail);
+      setRetryMessage(`Retrying... attempt ${event.detail.attempt} of ${event.detail.maxRetries} (waiting ${event.detail.delaySeconds}s)`);
+    };
+
+    window.addEventListener('ai-retry-status', handleRetryStatus as EventListener);
+    
+    return () => {
+      window.removeEventListener('ai-retry-status', handleRetryStatus as EventListener);
+    };
+  }, []);
 
   const generateInsights = async () => {
     if (scheduleData.length === 0) return;
@@ -30,6 +45,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
     setLoading(true);
     setError(null);
     setRetryMessage(null);
+    setRetryStatus(null);
     
     try {
       const result = await generateScheduleInsights(scheduleData, attendanceData);
@@ -40,10 +56,11 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
       
       // Show retry suggestion for certain errors
       if (errorMessage.includes('overloaded') || errorMessage.includes('unavailable')) {
-        setRetryMessage('The AI service is currently busy. You can try again in a few minutes.');
+        setRetryMessage('The AI service is currently busy. You can try again in a few minutes, or we can try a different model.');
       }
     } finally {
       setLoading(false);
+      setRetryStatus(null);
     }
   };
 
@@ -53,19 +70,21 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
     setLoading(true);
     setError(null);
     setRetryMessage(null);
+    setRetryStatus(null);
     
     try {
       const result = await generateScheduleOptimization(scheduleData, attendanceData);
       setOptimization(result);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to generate optimizations';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate optimization suggestions';
       setError(errorMessage);
       
       if (errorMessage.includes('overloaded') || errorMessage.includes('unavailable')) {
-        setRetryMessage('The AI service is currently busy. You can try again in a few minutes.');
+        setRetryMessage('The AI service is currently busy. You can try again in a few minutes, or we can try a different model.');
       }
     } finally {
       setLoading(false);
+      setRetryStatus(null);
     }
   };
 
@@ -75,21 +94,23 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
     setLoading(true);
     setError(null);
     setRetryMessage(null);
+    setRetryStatus(null);
     
     try {
-      // Use a sample class for prediction demonstration
+      // Use a sample class for prediction - in a real app, you'd allow user to select
       const sampleClass = scheduleData[0];
       const result = await predictAttendance(sampleClass, attendanceData);
       setPrediction(result);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to generate prediction';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate attendance prediction';
       setError(errorMessage);
       
       if (errorMessage.includes('overloaded') || errorMessage.includes('unavailable')) {
-        setRetryMessage('The AI service is currently busy. You can try again in a few minutes.');
+        setRetryMessage('The AI service is currently busy. You can try again in a few minutes, or we can try a different model.');
       }
     } finally {
       setLoading(false);
+      setRetryStatus(null);
     }
   };
 
@@ -230,15 +251,27 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ scheduleData, attendance
 
       {/* Loading State */}
       {loading && (
-        <div className="flex justify-center py-12">
+        <div className="flex flex-col items-center justify-center py-12">
           <Spinner 
             size="lg" 
             message="AI is analyzing your schedule data... This may take a moment." 
           />
-          <div className="text-center mt-4">
+          <div className="text-center mt-4 space-y-2">
             <p className="text-sm text-gray-600">
               If the service is busy, we'll automatically retry for you.
             </p>
+            {retryStatus && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-3">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-blue-600 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <p className="text-sm text-blue-800">
+                    Service busy - retrying (attempt {retryStatus.attempt} of {retryStatus.maxRetries}, waiting {retryStatus.delaySeconds}s)
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
