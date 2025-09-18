@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup": "cp .env.example .env && echo 'Please update VITE_GEMINI_API_KEY in .env with your actual API key'"
   },
   "dependencies": {
     "@google/genai": "^1.20.0",

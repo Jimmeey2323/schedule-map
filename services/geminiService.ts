@@ -10,10 +10,10 @@ function getAiInstance(): GoogleGenAI {
     return ai;
   }
   
-  const API_KEY = 'AIzaSyAq_QgITLnhKtvKrFhOw-rvHc0G8FURgPM';
+  const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
   if (!API_KEY) {
     // This error will now be thrown at runtime when processing is attempted, not on app load.
-    throw new Error("API_KEY environment variable not set. AI processing is unavailable.");
+    throw new Error("VITE_GEMINI_API_KEY environment variable not set. Please add your Gemini API key to the .env file. AI processing is unavailable.");
   }
   
   ai = new GoogleGenAI({ apiKey: API_KEY });
