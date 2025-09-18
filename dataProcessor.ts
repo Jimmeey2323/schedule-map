@@ -118,11 +118,21 @@ const difficultyMap: { [key: string]: string } = {
 const normalizeLocation = (locationRaw: string): string => {
     if (!locationRaw) return '';
     const lowerLoc = locationRaw.toLowerCase().trim();
-    if (lowerLoc.includes('kemps')) return 'Kwality House, Kemps Corner';
-    if (lowerLoc.includes('bandra')) return 'Supreme HQ, Bandra';
-    // Handle Bengaluru locations
-    if (lowerLoc.includes('c+c')) return 'C+C';
-    if (lowerLoc.includes('vm road')) return 'VM Road';
+    
+    // Mumbai locations
+    if (lowerLoc.includes('kemps') || lowerLoc.includes('kwality')) return 'Kwality House, Kemps Corner';
+    if (lowerLoc.includes('bandra') || lowerLoc.includes('supreme')) return 'Supreme HQ, Bandra';
+    
+    // Bengaluru locations  
+    if (lowerLoc.includes('c+c') || lowerLoc.includes('cumberland')) return 'C+C';
+    if (lowerLoc.includes('vm road') || lowerLoc.includes('vm')) return 'VM Road';
+    if (lowerLoc.includes('koramangala')) return 'Koramangala';
+    if (lowerLoc.includes('whitefield')) return 'Whitefield';
+    if (lowerLoc.includes('indiranagar')) return 'Indiranagar';
+    
+    // Online/Virtual
+    if (lowerLoc.includes('online') || lowerLoc.includes('virtual') || lowerLoc.includes('zoom')) return 'Online';
+    
     return locationRaw.trim();
 };
 
@@ -314,6 +324,7 @@ export const processAttendanceData = async (file: File): Promise<Map<string, Att
       complete: (results: any) => {
         try {
           const attendanceMap = new Map<string, any>();
+          const debugInfo: Array<{className: string, day: string, time: string, location: string, key: string}> = [];
           
           for(const row of results.data) {
             const className = normalizeClassName(row['Class name'] || '');
@@ -327,15 +338,36 @@ export const processAttendanceData = async (file: File): Promise<Map<string, Att
             const dateObj = new Date(dateParts[0].trim());
             const dayOfWeek = daysOrder[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
             
-            // FIX: Normalize the time string to match the schedule's format
+            // IMPROVED: Better time parsing and normalization
             const timeRaw = dateParts[1].trim();
             const timeDate = parseTimeToDate(timeRaw);
-            const time = timeDate ? formatTime(timeDate) : timeRaw;
+            const time = timeDate ? formatTime(timeDate) : '';
+            
+            // Skip if we can't parse the time properly
+            if (!time) {
+              console.warn(`Skipping attendance record with unparseable time: ${timeRaw}`);
+              continue;
+            }
 
             const location = normalizeLocation(locationRaw);
 
-            const tempClassData = { className, day: dayOfWeek, time, location } as ClassData;
+            const tempClassData = { 
+              className, 
+              day: dayOfWeek, 
+              time, 
+              location,
+              timeRaw: '',
+              timeDate: null,
+              trainer1: '',
+              cover: '',
+              notes: '',
+              uniqueKey: '',
+              difficulty: ''
+            } as ClassData;
             const key = createAttendanceKey(tempClassData);
+            
+            // Store debug info for troubleshooting
+            debugInfo.push({className, day: dayOfWeek, time, location, key});
             
             if (!attendanceMap.has(key)) {
               attendanceMap.set(key, { totalCheckedIn: 0, totalClasses: 0, participants: 0, lateCancellations: 0, nonPaidCustomers: 0, compsCheckedIn: 0 });
@@ -347,6 +379,12 @@ export const processAttendanceData = async (file: File): Promise<Map<string, Att
             agg.nonPaidCustomers += parseInt(row['Non Paid Customers'] || '0', 10);
             agg.compsCheckedIn += parseInt(row['Comps Checked In'] || '0', 10);
             agg.totalClasses++;
+          }
+
+          // Log debug information in development
+          if (process.env.NODE_ENV === 'development') {
+            console.log('Attendance data processing debug info:', debugInfo.slice(0, 10));
+            console.log(`Total attendance records processed: ${attendanceMap.size}`);
           }
 
           const finalMap = new Map<string, AttendanceData>();

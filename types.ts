@@ -41,4 +41,4 @@ export interface AttendanceData {
   notes: string;
 }
 
-export type MainView = 'schedule' | 'calendar' | 'datatable' | 'analytics';
+export type MainView = 'schedule' | 'calendar' | 'datatable' | 'analytics' | 'ai-insights';

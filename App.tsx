@@ -6,6 +6,8 @@ import { FilterControls } from './components/FilterControls';
 import { SummaryView } from './components/SummaryView';
 import { ClassDetailModal } from './components/ClassDetailModal';
 import { Spinner } from './components/ui/Spinner';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { AIInsights } from './components/AIInsights';
 import { extractScheduleData, processAttendanceData, parseTimeToDate, formatTime } from './dataProcessor';
 import { createAttendanceKey } from './utils';
 import type { ScheduleData, AttendanceData, ClassData, ClassSchedule, MainView } from './types';
@@ -45,8 +47,22 @@ function App() {
     setIsLoading(true);
     setIsAiProcessing(true);
     setError(null);
+    
+    // Validate file type
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setError('Please upload a valid CSV file for the schedule.');
+      setIsLoading(false);
+      setIsAiProcessing(false);
+      return;
+    }
+    
     try {
       const text = await file.text();
+      
+      // Validate CSV content
+      if (!text.trim()) {
+        throw new Error('The uploaded CSV file appears to be empty.');
+      }
       
       const localProcessing = extractScheduleData(text);
       const aiProcessing = processCsvData(text);
@@ -79,6 +95,14 @@ function App() {
   const handleAttendanceUpload = async (file: File) => {
     setIsLoading(true);
     setError(null);
+    
+    // Validate file type
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      setError('Please upload a valid ZIP file for the attendance data.');
+      setIsLoading(false);
+      return;
+    }
+    
     try {
       const data = await processAttendanceData(file);
       setAttendanceData(data);
@@ -139,9 +163,8 @@ function App() {
   const renderContent = () => {
     if (isLoading) {
       return (
-        <div className="text-center p-10">
-          <Spinner />
-          <p className="mt-4 text-lg text-slate-500">Loading...</p>
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <Spinner size="lg" message="Loading Schedule Analyzer..." />
         </div>
       );
     }
@@ -185,8 +208,7 @@ function App() {
             <MainNavigation currentView={mainView} setCurrentView={setMainView} />
             {isAiProcessing && (
                 <div className="text-center p-6 bg-blue-50 border border-blue-200 rounded-lg mb-6 flex items-center justify-center space-x-4">
-                    <Spinner />
-                    <p className="text-md text-blue-600 font-medium">Gemini AI is processing the raw data for advanced views...</p>
+                    <Spinner size="md" message="Gemini AI is processing the raw data for advanced views..." />
                 </div>
             )}
             
@@ -224,6 +246,13 @@ function App() {
                 </div>
             )}
 
+            {mainView === 'ai-insights' && (
+                <AIInsights 
+                    scheduleData={allClassData}
+                    attendanceData={attendanceData}
+                />
+            )}
+
             {mainView === 'calendar' && rawScheduleData && (
                  <div className="bg-white p-4 sm:p-6 rounded-xl shadow-md border border-slate-200">
                     <CalendarView data={rawScheduleData} onClassClick={onRawClassClick} />
@@ -241,33 +270,38 @@ function App() {
   };
 
   return (
-    <div className="bg-slate-100 text-slate-800 min-h-screen">
-      <header className="bg-white/80 backdrop-blur-sm sticky top-0 z-40 border-b border-slate-200">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            <span className="text-indigo-600">Schedule</span> Analyzer
-          </h1>
-          {scheduleData && (
-             <button
-              onClick={handleClear}
-              className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition shadow-sm"
-            >
-              Clear & Upload New
-            </button>
-          )}
-        </div>
-      </header>
-      <main className="container mx-auto p-4 sm:p-6 lg:p-8">
-        {renderContent()}
-      </main>
-      {selectedClass && (
-          <ClassDetailModal 
-              classData={selectedClass}
-              attendanceDetails={attendanceData.get(createAttendanceKey(selectedClass))}
-              onClose={() => setSelectedClass(null)}
-          />
-      )}
-    </div>
+    <ErrorBoundary>
+      <div className="bg-slate-100 text-slate-800 min-h-screen">
+        <header className="bg-white/80 backdrop-blur-sm sticky top-0 z-40 border-b border-slate-200">
+          <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              <span className="text-indigo-600">Schedule</span> Analyzer
+              <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-normal">
+                AI Enhanced
+              </span>
+            </h1>
+            {scheduleData && (
+               <button
+                onClick={handleClear}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition shadow-sm"
+              >
+                Clear & Upload New
+              </button>
+            )}
+          </div>
+        </header>
+        <main className="container mx-auto p-4 sm:p-6 lg:p-8">
+          {renderContent()}
+        </main>
+        {selectedClass && (
+            <ClassDetailModal 
+                classData={selectedClass}
+                attendanceDetails={attendanceData.get(createAttendanceKey(selectedClass))}
+                onClose={() => setSelectedClass(null)}
+            />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
 

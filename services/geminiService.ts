@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import type { ClassSchedule } from "../types";
+import type { ClassSchedule, ClassData, AttendanceData } from "../types";
 
 // Lazily initialize the AI instance to prevent app crash on load
 let ai: GoogleGenAI | null = null;
@@ -20,7 +20,82 @@ function getAiInstance(): GoogleGenAI {
   return ai;
 }
 
-const prompt = `
+// Enhanced AI services for schedule optimization and insights
+
+export interface ScheduleInsights {
+  summary: string;
+  trends: string[];
+  recommendations: string[];
+  busyTimes: { day: string; time: string; reason: string }[];
+  improvements: string[];
+}
+
+export interface AttendancePrediction {
+  predictedAttendance: number;
+  confidence: number;
+  factors: string[];
+  recommendations: string[];
+}
+
+export interface ScheduleOptimization {
+  suggestions: {
+    type: 'move' | 'add' | 'remove' | 'reschedule';
+    description: string;
+    impact: string;
+    priority: 'high' | 'medium' | 'low';
+  }[];
+  utilization: {
+    overutilized: string[];
+    underutilized: string[];
+  };
+  trainerBalance: {
+    overloaded: string[];
+    underutilized: string[];
+    recommendations: string[];
+  };
+}
+
+const scheduleAnalysisPrompt = `
+You are an expert fitness schedule analyst. Analyze the provided class schedule data and attendance information to generate comprehensive insights about schedule effectiveness, trends, and optimization opportunities.
+
+Focus on:
+1. Class popularity trends by time, day, and trainer
+2. Attendance patterns and peak/low usage times
+3. Resource utilization (trainers, locations, time slots)
+4. Schedule gaps or conflicts
+5. Opportunities for improvement
+
+Provide actionable insights that can help optimize the schedule for better attendance and resource utilization.
+`;
+
+const optimizationPrompt = `
+You are a schedule optimization expert. Analyze the provided schedule and attendance data to suggest specific improvements.
+
+Consider:
+1. Moving low-attendance classes to better time slots
+2. Adding popular classes where there's demand
+3. Balancing trainer workloads
+4. Optimizing location usage
+5. Identifying schedule gaps or oversaturated periods
+
+Provide specific, actionable suggestions with clear impact assessments and priority levels.
+`;
+
+const predictionPrompt = `
+You are an attendance prediction specialist. Based on historical attendance data and class characteristics, predict attendance for new or modified classes.
+
+Consider factors like:
+1. Day of week and time slot popularity
+2. Trainer popularity and effectiveness
+3. Class type and difficulty level
+4. Location preferences
+5. Historical patterns and trends
+
+Provide attendance predictions with confidence levels and key influencing factors.
+`;
+
+// Existing CSV processing functionality
+const csvProcessingPrompt = `
 You are an expert data processor. Your task is to analyze the provided raw text from a CSV file, which represents a weekly class schedule, and convert it into a structured JSON format. The CSV has a complex, non-tabular layout with repeating weekly blocks horizontally.
 
 Here are the rules you must follow:
@@ -48,7 +123,7 @@ Here are the rules you must follow:
 Your output MUST be a JSON object with a single key "schedules" which is an array of schedule objects, conforming to the provided schema.
 `;
 
-const schema = {
+const csvSchema = {
   type: Type.OBJECT,
   properties: {
     schedules: {
@@ -73,17 +148,94 @@ const schema = {
   },
 };
 
+const insightsSchema = {
+  type: Type.OBJECT,
+  properties: {
+    summary: { type: Type.STRING, description: 'Overall schedule summary' },
+    trends: { 
+      type: Type.ARRAY, 
+      items: { type: Type.STRING },
+      description: 'Key trends identified in the schedule and attendance data' 
+    },
+    recommendations: { 
+      type: Type.ARRAY, 
+      items: { type: Type.STRING },
+      description: 'Specific recommendations for schedule improvement' 
+    },
+    busyTimes: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          day: { type: Type.STRING },
+          time: { type: Type.STRING },
+          reason: { type: Type.STRING }
+        }
+      }
+    },
+    improvements: { 
+      type: Type.ARRAY, 
+      items: { type: Type.STRING },
+      description: 'Areas for potential improvement' 
+    }
+  }
+};
+
+const optimizationSchema = {
+  type: Type.OBJECT,
+  properties: {
+    suggestions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          type: { type: Type.STRING, enum: ['move', 'add', 'remove', 'reschedule'] },
+          description: { type: Type.STRING },
+          impact: { type: Type.STRING },
+          priority: { type: Type.STRING, enum: ['high', 'medium', 'low'] }
+        }
+      }
+    },
+    utilization: {
+      type: Type.OBJECT,
+      properties: {
+        overutilized: { type: Type.ARRAY, items: { type: Type.STRING } },
+        underutilized: { type: Type.ARRAY, items: { type: Type.STRING } }
+      }
+    },
+    trainerBalance: {
+      type: Type.OBJECT,
+      properties: {
+        overloaded: { type: Type.ARRAY, items: { type: Type.STRING } },
+        underutilized: { type: Type.ARRAY, items: { type: Type.STRING } },
+        recommendations: { type: Type.ARRAY, items: { type: Type.STRING } }
+      }
+    }
+  }
+};
+
+const predictionSchema = {
+  type: Type.OBJECT,
+  properties: {
+    predictedAttendance: { type: Type.NUMBER },
+    confidence: { type: Type.NUMBER },
+    factors: { type: Type.ARRAY, items: { type: Type.STRING } },
+    recommendations: { type: Type.ARRAY, items: { type: Type.STRING } }
+  }
+};
+
+// Enhanced AI Services
 
 export const processCsvData = async (csvText: string): Promise<ClassSchedule[]> => {
   try {
     const aiInstance = getAiInstance();
-    const fullPrompt = `${prompt}\n\nHere is the CSV data:\n\n${csvText}`;
+    const fullPrompt = `${csvProcessingPrompt}\n\nHere is the CSV data:\n\n${csvText}`;
     const response = await aiInstance.models.generateContent({
       model: "gemini-2.5-flash",
       contents: fullPrompt,
       config: {
         responseMimeType: "application/json",
-        responseSchema: schema,
+        responseSchema: csvSchema,
       },
     });
 
@@ -109,5 +261,129 @@ export const processCsvData = async (csvText: string): Promise<ClassSchedule[]> 
        throw new Error(`Failed to process data with AI: ${error.message}`);
     }
     throw new Error("Failed to parse data from AI due to an unknown error.");
+  }
+};
+
+export const generateScheduleInsights = async (
+  scheduleData: ClassData[],
+  attendanceData: Map<string, AttendanceData>
+): Promise<ScheduleInsights> => {
+  try {
+    const aiInstance = getAiInstance();
+    
+    // Prepare data for AI analysis
+    const scheduleContext = scheduleData.map(cls => ({
+      day: cls.day,
+      time: cls.time,
+      className: cls.className,
+      trainer: cls.trainer1,
+      location: cls.location,
+      difficulty: cls.difficulty
+    }));
+
+    const attendanceContext = Array.from(attendanceData.entries()).map(([key, data]) => ({
+      key,
+      avgAttendance: data.avgAttendance,
+      totalClasses: data.totalClasses,
+      checkedInCount: data.checkedInCount
+    }));
+
+    const contextData = {
+      schedule: scheduleContext,
+      attendance: attendanceContext
+    };
+
+    const fullPrompt = `${scheduleAnalysisPrompt}\n\nSchedule and attendance data:\n${JSON.stringify(contextData, null, 2)}`;
+    
+    const response = await aiInstance.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: fullPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: insightsSchema,
+      },
+    });
+
+    return JSON.parse(response.text.trim());
+  } catch (error) {
+    console.error("Error generating schedule insights:", error);
+    throw new Error("Failed to generate schedule insights");
+  }
+};
+
+export const generateScheduleOptimization = async (
+  scheduleData: ClassData[],
+  attendanceData: Map<string, AttendanceData>
+): Promise<ScheduleOptimization> => {
+  try {
+    const aiInstance = getAiInstance();
+    
+    const contextData = {
+      schedule: scheduleData.map(cls => ({
+        day: cls.day,
+        time: cls.time,
+        className: cls.className,
+        trainer: cls.trainer1,
+        location: cls.location,
+        difficulty: cls.difficulty
+      })),
+      attendance: Array.from(attendanceData.entries()).map(([key, data]) => ({
+        key,
+        avgAttendance: data.avgAttendance,
+        totalClasses: data.totalClasses,
+        checkedInCount: data.checkedInCount
+      }))
+    };
+
+    const fullPrompt = `${optimizationPrompt}\n\nData for optimization:\n${JSON.stringify(contextData, null, 2)}`;
+    
+    const response = await aiInstance.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: fullPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: optimizationSchema,
+      },
+    });
+
+    return JSON.parse(response.text.trim());
+  } catch (error) {
+    console.error("Error generating optimization suggestions:", error);
+    throw new Error("Failed to generate optimization suggestions");
+  }
+};
+
+export const predictAttendance = async (
+  classData: Partial<ClassData>,
+  historicalData: Map<string, AttendanceData>
+): Promise<AttendancePrediction> => {
+  try {
+    const aiInstance = getAiInstance();
+    
+    const contextData = {
+      targetClass: classData,
+      historicalAttendance: Array.from(historicalData.entries()).map(([key, data]) => ({
+        key,
+        avgAttendance: data.avgAttendance,
+        totalClasses: data.totalClasses,
+        checkedInCount: data.checkedInCount
+      }))
+    };
+
+    const fullPrompt = `${predictionPrompt}\n\nPredict attendance for:\n${JSON.stringify(contextData, null, 2)}`;
+    
+    const response = await aiInstance.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: fullPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: predictionSchema,
+      },
+    });
+
+    return JSON.parse(response.text.trim());
+  } catch (error) {
+    console.error("Error predicting attendance:", error);
+    throw new Error("Failed to predict attendance");
   }
 };
