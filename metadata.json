@@ -1,0 +1,5 @@
+{
+  "name": "Intelligent CSV Data Processor",
+  "description": "A modern, sophisticated web app that allows users to upload complex CSV files. The app uses AI to process and clean the file, then displays the data in a multi-view professional datatable with comprehensive filtering, grouping, and analytics.",
+  "requestFramePermissions": []
+}
